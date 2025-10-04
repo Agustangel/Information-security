@@ -17,11 +17,17 @@
 
 #include "database.h"
 #include "hash_generator.h"
+#include "password_policy.h"
+#include "security_logger.h"
 
 using namespace std;
 
 // Глобальная база данных пользователей
 UserDatabase userDB;
+
+// Глобальные объекты для безопасности
+SecurityLogger securityLogger;
+PasswordPolicy passwordPolicy;
 
 map<string, LockInfo> loginAttempts;
 
@@ -78,13 +84,13 @@ void showIPLockInfo(const string& ip) {
   if (userDB.isIPLocked(ip)) {
     time_t unlockTime = userDB.getIPUnlockTime(ip);
     int remaining = unlockTime - now;
-    cout << "\n  ВНИМАНИЕ: Ваш IP заблокирован за слишком много неудачных "
+    cout << "\n ВНИМАНИЕ: Ваш IP заблокирован за слишком много неудачных "
             "попыток входа!"
          << endl;
     cout << "Разблокировка через: " << remaining << " секунд" << endl;
     cout << "Всего попыток: " << ipInfo.attempts << endl;
   } else if (ipInfo.attempts > 0) {
-    cout << "\n  Статистика безопасности:" << endl;
+    cout << "\n Статистика безопасности:" << endl;
     cout << "Неудачных попыток с вашего IP: " << ipInfo.attempts << "/10"
          << endl;
     cout << "После 10 неудачных попыток IP будет заблокирован на 1 минуту"
@@ -112,6 +118,7 @@ UserSession authenticate() {
     // Проверка блокировки IP
     if (userDB.isIPLocked(clientIP)) {
       showIPLockInfo(clientIP);
+      securityLogger.logSecurityEvent("IP blocked", "ip=" + clientIP);
       // Ждем разблокировки
       while (userDB.isIPLocked(clientIP)) {
         time_t unlockTime = userDB.getIPUnlockTime(clientIP);
@@ -124,14 +131,15 @@ UserSession authenticate() {
         sleep(10);  // 10 секунд для Linux/Mac
       }
       cout << "IP разблокирован! Продолжаем..." << endl;
+      securityLogger.logSecurityEvent("IP unblocked", "ip=" + clientIP);
     }
 
-    cout << "\nЛогин: ";
+    cout << "\n Логин: ";
     cin >> login;
 
     if (isAccountLocked(login)) {
-      userDB.registerFailedAttempt(
-          clientIP);  // Регистрируем попытку входа в заблокированный аккаунт
+      securityLogger.logLoginFailure(login, clientIP, "Account locked");
+      userDB.registerFailedAttempt(clientIP);
       showIPLockInfo(clientIP);
       continue;
     }
@@ -140,6 +148,7 @@ UserSession authenticate() {
     UserInfo* userInfo = userDB.getUser(login);
     if (userInfo && !userInfo->isActive) {
       cout << "Учетная запись отключена. Обратитесь к администратору." << endl;
+      securityLogger.logLoginFailure(login, clientIP, "Account disabled");
       userDB.registerFailedAttempt(clientIP);
       showIPLockInfo(clientIP);
       continue;
@@ -152,6 +161,9 @@ UserSession authenticate() {
                         password, userInfo->passwordHash)) {
       cout << "\n Доступ разрешен! Добро пожаловать, " << login << "!" << endl;
       cout << "Ваша роль: " << getRoleName(userInfo->role) << endl;
+
+      // Логируем успешный вход
+      securityLogger.logLoginSuccess(login, clientIP);
 
       // Сбрасываем счетчики при успешном входе
       if (loginAttempts.find(login) != loginAttempts.end()) {
@@ -173,11 +185,17 @@ UserSession authenticate() {
       LockInfo& info = loginAttempts[login];
       int remaining = max_attempts - info.attempts;
 
+      // Логируем неудачную попытку
+      string failureReason = userInfo ? "Wrong password" : "User not found";
+      securityLogger.logLoginFailure(login, clientIP, failureReason);
+
       if (info.attempts >= max_attempts) {
         info.unlockTime = time(nullptr) + lock_time;
-        cout << "\nПревышено максимальное количество попыток для аккаунта!"
+        cout << "\n Превышено максимальное количество попыток для аккаунта!"
              << endl;
         cout << "Аккаунт заблокирован на " << lock_time << " секунд." << endl;
+        securityLogger.logSecurityEvent("Account locked",
+                                        "user=" + login + " ip=" + clientIP);
       } else if (remaining > 0) {
         cout << "Неверные данные. Осталось попыток для аккаунта: " << remaining
              << endl;
@@ -270,7 +288,8 @@ void calculator(const UserSession& session) {
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
           }
 
-          cout << "\nВычисление: " << num1 << " " << op << " " << num2 << " = ";
+          cout << "\n Вычисление: " << num1 << " " << op << " " << num2
+               << " = ";
 
           switch (op) {
             case '+':
@@ -304,7 +323,7 @@ void calculator(const UserSession& session) {
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
           }
 
-          cout << "\nВычисление: " << intNum << "! = ";
+          cout << "\n Вычисление: " << intNum << "! = ";
           if (intNum < 0) {
             throw runtime_error("Факториал отрицательного числа не определен!");
           }
@@ -323,7 +342,7 @@ void calculator(const UserSession& session) {
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
           }
 
-          cout << "\nВычисление: √" << num1 << " = ";
+          cout << "\n Вычисление: √" << num1 << " = ";
           if (num1 < 0) {
             throw runtime_error("Квадратный корень из отрицательного числа!");
           }
@@ -339,7 +358,7 @@ void calculator(const UserSession& session) {
             cin.ignore(numeric_limits<streamsize>::max(), '\n');
           }
 
-          cout << "\nВычисление: ln(" << num1 << ") = ";
+          cout << "\n Вычисление: ln(" << num1 << ") = ";
           if (num1 <= 0) {
             throw runtime_error(
                 "Логарифм определен только для положительных чисел!");
@@ -368,8 +387,9 @@ void adminPanel(UserSession& session) {
     cout << "5. Удалить пользователя" << endl;
     cout << "6. Показать статистику IP блокировок" << endl;
     cout << "7. Сохранить базу данных" << endl;
-    cout << "8. Вернуться в калькулятор" << endl;
-    cout << "9. Выход" << endl;
+    cout << "8. Показать логи безопасности" << endl;
+    cout << "9. Вернуться в калькулятор" << endl;
+    cout << "0. Выход" << endl;
     cout << "Выберите опцию: ";
 
     cin >> choice;
@@ -380,8 +400,24 @@ void adminPanel(UserSession& session) {
       int roleChoice;
       cout << "Новый логин: ";
       cin >> login;
-      cout << "Новый пароль: ";
-      cin >> password;
+
+      // Проверка политики паролей
+      bool passwordValid = false;
+      do {
+        cout << "Новый пароль: ";
+        cin >> password;
+
+        auto validation = passwordPolicy.validatePassword(password);
+        if (validation.isValid) {
+          passwordValid = true;
+        } else {
+          cout << "Ошибка пароля: " << validation.message << endl;
+          cout << "Требования: минимум 6 символов, заглавные и строчные буквы, "
+                  "цифры, специальные символы"
+               << endl;
+        }
+      } while (!passwordValid);
+
       cout << "Выберите роль (0 - Гость, 1 - Пользователь, 2 - Админ): ";
       cin >> roleChoice;
 
@@ -395,8 +431,10 @@ void adminPanel(UserSession& session) {
       cout << "Пользователь " << login << " добавлен с ролью "
            << getRoleName(newRole) << "!" << endl;
 
+      securityLogger.logAdminAction(session.username, "add_user", login);
+
     } else if (choice == 2) {
-      cout << "\nЗарегистрированные пользователи:" << endl;
+      cout << "\n Зарегистрированные пользователи:" << endl;
       cout << string(55, '-') << endl;
       cout << left << setw(15) << "Логин" << setw(20) << "Роль" << setw(15)
            << "Статус" << endl;
@@ -406,6 +444,70 @@ void adminPanel(UserSession& session) {
         cout << left << setw(15) << user.first << setw(20)
              << getRoleName(user.second.role) << setw(15)
              << (user.second.isActive ? "Активен" : "Заблокирован") << endl;
+      }
+
+    } else if (choice == 3) {
+      string login;
+      int newRoleChoice;
+      cout << "Введите логин пользователя: ";
+      cin >> login;
+
+      UserInfo* userInfo = userDB.getUser(login);
+      if (userInfo) {
+        cout << "Текущая роль: " << getRoleName(userInfo->role) << endl;
+        cout << "Новая роль (0 - Гость, 1 - Пользователь, 2 - Админ): ";
+        cin >> newRoleChoice;
+
+        Role newRole = Role::GUEST;
+        if (newRoleChoice == 1)
+          newRole = Role::USER;
+        else if (newRoleChoice == 2)
+          newRole = Role::ADMIN;
+
+        if (userDB.updateUserRole(login, newRole)) {
+          cout << "Роль пользователя " << login << " изменена на "
+               << getRoleName(newRole) << endl;
+          securityLogger.logAdminAction(session.username, "change_role", login);
+        } else {
+          cout << "Ошибка при изменении роли!" << endl;
+        }
+      } else {
+        cout << "Пользователь не найден!" << endl;
+      }
+
+    } else if (choice == 4) {
+      string login;
+      cout << "Введите логин пользователя: ";
+      cin >> login;
+
+      UserInfo* userInfo = userDB.getUser(login);
+      if (userInfo) {
+        if (userDB.toggleUserActive(login)) {
+          bool newStatus = userDB.getUser(login)->isActive;
+          cout << "Пользователь " << login << " теперь "
+               << (newStatus ? "активен" : "заблокирован") << endl;
+          securityLogger.logAdminAction(
+              session.username, newStatus ? "unblock_user" : "block_user",
+              login);
+        } else {
+          cout << "Ошибка при изменении статуса!" << endl;
+        }
+      } else {
+        cout << "Пользователь не найден!" << endl;
+      }
+
+    } else if (choice == 5) {
+      string login;
+      cout << "Введите логин пользователя для удаления: ";
+      cin >> login;
+
+      if (login == session.username) {
+        cout << "Нельзя удалить свою учетную запись!" << endl;
+      } else if (userDB.deleteUser(login)) {
+        cout << "Пользователь " << login << " удален!" << endl;
+        securityLogger.logAdminAction(session.username, "delete_user", login);
+      } else {
+        cout << "Пользователь не найден!" << endl;
       }
 
     } else if (choice == 6) {
@@ -421,11 +523,20 @@ void adminPanel(UserSession& session) {
       } else {
         cout << "Статус: АКТИВЕН" << endl;
       }
-    }
-    // ... остальные пункты меню
-    else if (choice == 8) {
-      calculator(session);
+    } else if (choice == 7) {
+      if (userDB.saveUsers()) {
+        cout << "База данных успешно сохранена!" << endl;
+        securityLogger.logAdminAction(session.username, "save_database", "");
+      } else {
+        cout << "Ошибка при сохранении базы данных!" << endl;
+      }
+    } else if (choice == 8) {
+      cout << "\n=== ЛОГИ БЕЗОПАСНОСТИ ===" << endl;
+      cout << "Логи записываются в файл: security.log" << endl;
+      cout << "Для просмотра используйте команду: tail -f security.log" << endl;
     } else if (choice == 9) {
+      calculator(session);
+    } else if (choice == 0) {
       cout << "Выход из системы..." << endl;
       if (userDB.saveUsers()) {
         cout << "Изменения сохранены." << endl;
@@ -449,19 +560,37 @@ void changePassword(UserSession& session) {
   UserInfo* userInfo = userDB.getUser(session.username);
   if (userInfo && SecurePasswordHasher::verifyPassword(
                       currentPassword, userInfo->passwordHash)) {
-    cout << "Новый пароль: ";
-    cin >> newPassword;
+    // Проверка нового пароля по политике
+    bool passwordValid = false;
+    do {
+      cout << "Новый пароль: ";
+      cin >> newPassword;
+
+      auto validation = passwordPolicy.validatePassword(newPassword);
+      if (validation.isValid) {
+        passwordValid = true;
+      } else {
+        cout << "Ошибка пароля: " << validation.message << endl;
+        cout << "Требования: минимум 8 символов, заглавные и строчные буквы, "
+                "цифры, специальные символы"
+             << endl;
+      }
+    } while (!passwordValid);
+
     cout << "Подтвердите новый пароль: ";
     cin >> confirmPassword;
 
     if (newPassword == confirmPassword) {
       userInfo->passwordHash = SecurePasswordHasher::hashPassword(newPassword);
       cout << "Пароль успешно изменен!" << endl;
+      securityLogger.logPasswordChange(session.username, true);
     } else {
       cout << "Пароли не совпадают!" << endl;
+      securityLogger.logPasswordChange(session.username, false);
     }
   } else {
     cout << "Неверный текущий пароль!" << endl;
+    securityLogger.logPasswordChange(session.username, false);
   }
 }
 
@@ -502,14 +631,18 @@ int main() {
 
   cout << "=========================================" << endl;
   cout << "    БЕЗОПАСНЫЙ КАЛЬКУЛЯТОР" << endl;
-  cout << "    С ФАЙЛОВОЙ БАЗОЙ ДАННЫХ" << endl;
-  cout << "    И IP БЛОКИРОВКАМИ" << endl;
   cout << "=========================================" << endl;
+
+  // Логируем запуск приложения
+  securityLogger.logSecurityEvent("Application started",
+                                  "Secure Calculator v1.0");
 
   // Загрузка базы данных
   if (!userDB.loadUsers()) {
     cerr << "Критическая ошибка: Не удалось загрузить базу пользователей!"
          << endl;
+    securityLogger.logSecurityEvent("Critical error",
+                                    "Failed to load user database");
     return 1;
   }
 
@@ -522,11 +655,16 @@ int main() {
     // Сохраняем базу данных при выходе
     if (userDB.saveUsers()) {
       cout << "Изменения сохранены." << endl;
+      securityLogger.logSecurityEvent("Application shutdown",
+                                      "Normal termination");
     } else {
       cout << "Предупреждение: Не удалось сохранить изменения!" << endl;
+      securityLogger.logSecurityEvent("Application shutdown", "Save error");
     }
   } else {
     cout << "Программа завершена по соображениям безопасности." << endl;
+    securityLogger.logSecurityEvent("Application shutdown",
+                                    "Security termination");
     return 1;
   }
 

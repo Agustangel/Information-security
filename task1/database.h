@@ -264,11 +264,11 @@ class UserDatabase {
   void createDefaultUsers() {
     users = {
         {"admin",
-         {SecurePasswordHasher::hashPassword("admin123"), Role::ADMIN, true}},
+         {SecurePasswordHasher::hashPassword("Admin123!"), Role::ADMIN, true}},
         {"user1",
-         {SecurePasswordHasher::hashPassword("user123"), Role::USER, true}},
+         {SecurePasswordHasher::hashPassword("User123!"), Role::USER, true}},
         {"guest",
-         {SecurePasswordHasher::hashPassword("guest123"), Role::GUEST, true}}};
+         {SecurePasswordHasher::hashPassword("Guest123!"), Role::GUEST, true}}};
   }
 
   // Методы доступа к пользователям
