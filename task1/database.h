@@ -1,11 +1,13 @@
 #ifndef DATABASE_H
 #define DATABASE_H
 
+#include <ctime>
 #include <fstream>
 #include <iostream>
 #include <map>
 #include <sstream>
 #include <string>
+#include <vector>
 
 #include "hash_generator.h"
 
@@ -25,11 +27,34 @@ struct UserInfo {
   bool isActive;
 };
 
+// Структура для сессии пользователя
+struct UserSession {
+  string username;
+  Role role;
+  string ipAddress;
+};
+
+// Структура для IP-блокировки
+struct IPLockInfo {
+  int attempts;
+  time_t unlockTime;
+  time_t lastAttemptTime;
+};
+
+// Структура для хранения информации о блокировке
+struct LockInfo {
+  int attempts;
+  time_t unlockTime;
+};
+
 // Класс для работы с базой данных пользователей
 class UserDatabase {
  private:
   string dbFilename;
   map<string, UserInfo> users;
+  map<string, IPLockInfo> ipLocks;     // Блокировки по IP
+  const int MAX_GLOBAL_ATTEMPTS = 10;  // Максимум попыток с IP
+  const int GLOBAL_LOCK_TIME = 60;  // Блокировка на 1 минуту
 
   string simpleEncrypt(const string& data, const string& key) {
     string encrypted = data;
@@ -48,8 +73,75 @@ class UserDatabase {
           S_IRUSR | S_IWUSR);  // Только владелец может читать/писать
   }
 
+  // Очистка старых блокировок (старше 24 часов)
+  void cleanupOldLocks() {
+    time_t now = time(nullptr);
+    vector<string> toRemove;
+
+    for (const auto& [ip, lockInfo] : ipLocks) {
+      if (now - lockInfo.lastAttemptTime > 86400) {  // 24 часа
+        toRemove.push_back(ip);
+      }
+    }
+
+    for (const auto& ip : toRemove) {
+      ipLocks.erase(ip);
+    }
+  }
+
  public:
   UserDatabase(const string& filename = "users.dat") : dbFilename(filename) {}
+
+  // Проверка блокировки IP
+  bool isIPLocked(const string& ip) {
+    cleanupOldLocks();
+
+    auto it = ipLocks.find(ip);
+    if (it != ipLocks.end()) {
+      IPLockInfo& info = it->second;
+
+      if (info.attempts >= MAX_GLOBAL_ATTEMPTS) {
+        time_t now = time(nullptr);
+        if (now < info.unlockTime) {
+          return true;
+        } else {
+          // Время блокировки истекло, сбрасываем счетчик
+          info.attempts = 0;
+        }
+      }
+    }
+    return false;
+  }
+
+  // Получение времени разблокировки IP
+  time_t getIPUnlockTime(const string& ip) {
+    auto it = ipLocks.find(ip);
+    return it != ipLocks.end() ? it->second.unlockTime : 0;
+  }
+
+  // Регистрация неудачной попытки входа с IP
+  void registerFailedAttempt(const string& ip) {
+    IPLockInfo& info = ipLocks[ip];
+    time_t now = time(nullptr);
+
+    info.attempts++;
+    info.lastAttemptTime = now;
+
+    if (info.attempts >= MAX_GLOBAL_ATTEMPTS) {
+      info.unlockTime = now + GLOBAL_LOCK_TIME;
+    }
+  }
+
+  // Сброс счетчика попыток для IP (при успешном входе)
+  void resetIPAttempts(const string& ip) {
+    auto it = ipLocks.find(ip);
+    if (it != ipLocks.end()) {
+      it->second.attempts = 0;
+    }
+  }
+
+  // Получение информации о блокировке IP
+  IPLockInfo getIPLockInfo(const string& ip) { return ipLocks[ip]; }
 
   bool loadUsers(const string& encryptionKey = "default_key_123") {
     ifstream file(dbFilename, ios::binary);
