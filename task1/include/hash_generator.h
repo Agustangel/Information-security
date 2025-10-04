@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef HASH_GENERATOR_H
 #define HASH_GENERATOR_H
 

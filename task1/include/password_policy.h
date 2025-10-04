@@ -1,3 +1,5 @@
+#pragma once
+
 #ifndef PASSWORD_POLICY_H
 #define PASSWORD_POLICY_H
 
@@ -9,7 +11,7 @@ using namespace std;
 
 class PasswordPolicy {
  private:
-  int minLength = 6;
+  size_t minLength = 8;
   bool requireUpper = true;
   bool requireLower = true;
   bool requireDigits = true;

@@ -1,6 +1,8 @@
 #ifndef SECURITY_LOGGER_H
 #define SECURITY_LOGGER_H
 
+#include <sys/stat.h>
+
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -24,7 +26,7 @@ class SecurityLogger {
   void setFilePermissions() { chmod(logFilename.c_str(), S_IRUSR | S_IWUSR); }
 
  public:
-  SecurityLogger(const string& filename = "security.log")
+  SecurityLogger(const string& filename = "../security.log")
       : logFilename(filename) {
     logFile.open(logFilename, ios::app);
     setFilePermissions();

@@ -1,5 +1,9 @@
+#pragma once
+
 #ifndef DATABASE_H
 #define DATABASE_H
+
+#include <sys/stat.h>
 
 #include <ctime>
 #include <fstream>
@@ -27,24 +31,11 @@ struct UserInfo {
   bool isActive;
 };
 
-// Структура для сессии пользователя
-struct UserSession {
-  string username;
-  Role role;
-  string ipAddress;
-};
-
 // Структура для IP-блокировки
 struct IPLockInfo {
   int attempts;
   time_t unlockTime;
   time_t lastAttemptTime;
-};
-
-// Структура для хранения информации о блокировке
-struct LockInfo {
-  int attempts;
-  time_t unlockTime;
 };
 
 // Класс для работы с базой данных пользователей
@@ -90,7 +81,8 @@ class UserDatabase {
   }
 
  public:
-  UserDatabase(const string& filename = "users.dat") : dbFilename(filename) {}
+  UserDatabase(const string& filename = "../users.dat")
+      : dbFilename(filename) {}
 
   // Проверка блокировки IP
   bool isIPLocked(const string& ip) {
