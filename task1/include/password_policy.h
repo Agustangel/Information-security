@@ -55,7 +55,9 @@ class PasswordPolicy {
 
     for (const auto& common : commonPasswords) {
       if (lowerPassword.find(common) != string::npos) {
-        return {false, "Пароль слишком распространен"};
+        return {false,
+                "Отказано по причинам безопасности. Пароль содержит "
+                "распространённую последовательность символов."};
       }
     }
 

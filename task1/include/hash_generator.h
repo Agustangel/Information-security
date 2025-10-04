@@ -32,7 +32,7 @@ class SecurePasswordHasher {
     string saltedPassword = salt + password;
     size_t hashValue = hash<string>{}(saltedPassword);
 
-    // Формат: salt|hash (используем другой разделитель)
+    // Формат: salt|hash
     return salt + "|" +
            bytesToHex((unsigned char*)&hashValue, sizeof(hashValue));
   }

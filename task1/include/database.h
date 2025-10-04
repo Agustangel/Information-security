@@ -1,5 +1,3 @@
-#pragma once
-
 #ifndef DATABASE_H
 #define DATABASE_H
 
@@ -46,6 +44,9 @@ class UserDatabase {
   map<string, IPLockInfo> ipLocks;     // Блокировки по IP
   const int MAX_GLOBAL_ATTEMPTS = 10;  // Максимум попыток с IP
   const int GLOBAL_LOCK_TIME = 60;  // Блокировка на 1 минуту
+
+  // Inline static константа для ключа шифрования
+  inline static const string DEFAULT_ENCRYPTION_KEY = "secure_calc_key_2024!@#";
 
   string simpleEncrypt(const string& data, const string& key) {
     string encrypted = data;
@@ -135,12 +136,14 @@ class UserDatabase {
   // Получение информации о блокировке IP
   IPLockInfo getIPLockInfo(const string& ip) { return ipLocks[ip]; }
 
-  bool loadUsers(const string& encryptionKey = "default_key_123") {
+  bool loadUsers(const string& encryptionKey = "") {
+    string key = encryptionKey.empty() ? DEFAULT_ENCRYPTION_KEY : encryptionKey;
+
     ifstream file(dbFilename, ios::binary);
     if (!file.is_open()) {
       cout << "База пользователей не найдена. Создана новая." << endl;
       createDefaultUsers();
-      return saveUsers(encryptionKey);
+      return saveUsers(key);
     }
 
     string encryptedData((istreambuf_iterator<char>(file)),
@@ -150,9 +153,11 @@ class UserDatabase {
     if (encryptedData.empty()) {
       cout << "База пользователей пуста." << endl;
       createDefaultUsers();
-      return saveUsers(encryptionKey);
+      return saveUsers(key);
     }
-    string data = encryptedData;
+
+    // ДЕШИФРОВКА данных
+    string data = simpleDecrypt(encryptedData, key);
 
     // Парсинг данных
     stringstream ss(data);
@@ -210,13 +215,15 @@ class UserDatabase {
     if (users.empty()) {
       cout << "Создана новая база пользователей по умолчанию." << endl;
       createDefaultUsers();
-      return saveUsers(encryptionKey);
+      return saveUsers(key);
     }
 
     return true;
   }
 
-  bool saveUsers(const string& encryptionKey = "default_key_123") {
+  bool saveUsers(const string& encryptionKey = "") {
+    string key = encryptionKey.empty() ? DEFAULT_ENCRYPTION_KEY : encryptionKey;
+
     ofstream file(dbFilename, ios::binary);
     if (!file.is_open()) {
       cerr << "Ошибка: Не удалось открыть файл для записи: " << dbFilename
@@ -238,8 +245,9 @@ class UserDatabase {
     }
 
     string dataStr = data.str();
-    string output = dataStr;
-    file << output;
+    // ШИФРОВАНИЕ данных перед записью
+    string encryptedOutput = simpleEncrypt(dataStr, key);
+    file << encryptedOutput;
     if (!file.good()) {
       cerr << "Ошибка при записи в файл!" << endl;
       return false;
